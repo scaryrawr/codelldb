@@ -231,9 +231,20 @@ jobs:
   pool:
     vmImage: 'windows-2019'
 
-  variables:
-    PlatformId: 'x86_64-windows'
-    Triple: 'x86_64-windows-msvc'
+  strategy:
+    matrix:
+      x86_64:
+        PlatformId: 'x86_64-windows'
+        Triple: 'x86_64-windows-msvc'
+        Arch: 'amd64'
+        RustTarget: 'x86_64-pc-windows-msvc'
+        Llvm: ''
+      aarch64:
+        PlatformId: 'aarch64-windows'
+        Triple: 'aarch64-windows-msvc'
+        Arch: 'arm64'
+        RustTarget: 'aarch64-pc-windows-msvc'
+        Llvm: 'woa64'
 
   steps:
 
@@ -255,6 +266,14 @@ jobs:
       downloadPath: '$(Agent.BuildDirectory)/D'
     displayName: 'Download LLDB'
 
+  - task: PowerShell@2
+    targetType: 'inline'
+    script: |
+      if ('$(Llvm)') {
+        iwr -Uri https://github.com/llvm/llvm-project/releases/download/llvmorg-16.0.6/LLVM-16.0.6-$(Llvm).exe -OutFile llvm.exe
+        llvm.exe /S /D $(Agent.BuildDirectory)/D/LLVM
+      }
+
   - task: Cache@2
     inputs:
       key: '$(cachePrefix) | $(Triple) | node_modules | package-lock.json'
@@ -266,7 +285,7 @@ jobs:
   - task: BatchScript@1
     inputs:
       filename: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\Common7\\Tools\\VsDevCmd.bat"
-      arguments: -arch=amd64 -host_arch=amd64
+      arguments: -arch=$(Arch) -host_arch=amd64
       modifyEnvironment: true
     displayName: VsDevCmd
 
@@ -275,7 +294,7 @@ jobs:
       set PATH=%USERPROFILE%\.cargo\bin;%PATH%
       rustup toolchain install $(rustcVersion)-x86_64-pc-windows-gnu
       rustup default $(rustcVersion)-x86_64-pc-windows-gnu
-      rustup target add x86_64-pc-windows-msvc
+      rustup target add $(RustTarget)
       rustup show
     displayName: 'Install Rust'
 
@@ -288,13 +307,23 @@ jobs:
       $(setenvWindows)
       mkdir build
       cd build
-      cmake -GNinja^
-            -DVERSION_SUFFIX=$(versionSuffix)^
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo^
-            -DTEST_TIMEOUT=30000^
-            -DLLDB_PACKAGE=$(Agent.BuildDirectory)/D/lldb--$(Triple)/lldb--$(Triple).zip^
-            -DCMAKE_TOOLCHAIN_FILE=$(Build.SourcesDirectory)/cmake/toolchain-x86_64-windows-msvc.cmake^
-            ..
+      if [ -z '$(Llvm)' ]; then
+        cmake -GNinja^
+              -DVERSION_SUFFIX=$(versionSuffix)^
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo^
+              -DTEST_TIMEOUT=30000^
+              -DLLDB_PACKAGE=$(Agent.BuildDirectory)/D/lldb--$(Triple)/lldb--$(Triple).zip^
+              -DCMAKE_TOOLCHAIN_FILE=$(Build.SourcesDirectory)/cmake/toolchain-$(Triple).cmake^
+              ..
+      else
+        cmake -GNinja^
+              -DVERSION_SUFFIX=$(versionSuffix)^
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo^
+              -DTEST_TIMEOUT=30000^
+              -DLLDB_PACKAGE=$(Agent.BuildDirectory)/D/LLVM^
+              -DCMAKE_TOOLCHAIN_FILE=$(Build.SourcesDirectory)/cmake/toolchain-$(Triple).cmake^
+              ..
+      fi
       type CMakeCache.txt
     displayName: 'Configure'
 
